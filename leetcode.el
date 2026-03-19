@@ -179,7 +179,7 @@ The elements of :problems has attributes:
 (defconst leetcode--api-root                (concat leetcode--base-url "/api"))
 (defconst leetcode--api-graphql             (concat leetcode--base-url "/graphql"))
 (defconst leetcode--api-all-problems        (concat leetcode--api-root "/problems/all/"))
-(defconst leetcode--api-all-tags            (concat leetcode--base-url "/problems/api/tags"))
+(defconst leetcode--api-all-tags            (concat leetcode--base-url "/problems/api/tags/"))
 (defconst leetcode--api-daily-challenge
   "query todayRecord { todayRecord { date question { questionFrontendId title titleSlug status } } }")
 ;; submit
