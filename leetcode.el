@@ -181,9 +181,7 @@ The elements of :problems has attributes:
 (defconst leetcode--api-all-problems        (concat leetcode--api-root "/problems/all/"))
 (defconst leetcode--api-all-tags            (concat leetcode--base-url "/problems/api/tags"))
 (defconst leetcode--api-daily-challenge
-  (concat
-   "query questionOfToday { activeDailyCodingChallengeQuestion {"
-   " link question { status title titleSlug qid: questionFrontendId } } }"))
+  "query todayRecord { todayRecord { date question { questionFrontendId title titleSlug status } } }")
 ;; submit
 (defconst leetcode--api-submit              (concat leetcode--base-url "/problems/%s/submit/"))
 (defconst leetcode--api-problems-submission (concat leetcode--base-url "/problems/%s/submissions/"))
@@ -668,16 +666,16 @@ see: https://github.com/skeeto/emacs-aio/issues/3."
          (url-request-extra-headers
           `(,leetcode--User-Agent
             ("Content-Type" . "application/json")
-            ,(leetcode--referer leetcode--url-login) 
+            ,(leetcode--referer leetcode--url-login)
             ,(cons leetcode--X-CSRFToken (leetcode--maybe-csrf-token))))
          (url-request-data
           (json-encode
-           `((operationName . "questionOfToday")
+           `((operationName . "todayRecord")
              (query . ,leetcode--api-daily-challenge)))))
     (with-current-buffer (url-retrieve-synchronously leetcode--api-graphql)
       (goto-char url-http-end-of-headers)
       (let-alist (json-read)
-        (let ((qid .data.activeDailyCodingChallengeQuestion.question.qid))
+        (let ((qid .data.todayRecord.0.question.questionFrontendId))
           (leetcode-show-problem (string-to-number qid)))))))
 
 (defun leetcode--buffer-content (buf)
@@ -996,7 +994,8 @@ will show the description in other window and jump to it."
                         "dislikes: " (number-to-string .dislikes)))
         (insert .content)
         (setq shr-current-font t)
-        (leetcode--replace-in-buffer "" "")
+        (leetcode--replace-in-buffer "
+" "")
         ;; NOTE: shr.el can't render "https://xxxx.png", so we use "http"
         (leetcode--replace-in-buffer "https" "http")
         (shr-render-buffer (current-buffer)))
@@ -1259,7 +1258,8 @@ major mode by `leetcode-prefer-language'and `auto-mode-alist'."
                         (goto-char (point-min))
                         (search-forward (string-trim template-code) nil t))
                 (insert template-code))
-              (leetcode--replace-in-buffer "" ""))))
+              (leetcode--replace-in-buffer "
+" ""))))
 
         (display-buffer code-buf
                         '((display-buffer-reuse-window
