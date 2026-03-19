@@ -324,7 +324,9 @@ USER-AND-PROBLEMS is an alist comes from
                         :status .status
                         :id .stat.question_id
                         :backend-id .stat.question_id
+                        :frontend-id .stat.frontend_question_id
                         :title .stat.question__title
+                        :title-slug .stat.question__title_slug
                         :acceptance (format
                                      "%.1f%%"
                                      (* 100
@@ -375,6 +377,7 @@ OPERATION and VARS are LeetCode GraphQL parameters."
             likes
             dislikes
             content
+            translatedContent
             status
             sampleTestCase
             (topicTags slug)
@@ -405,7 +408,27 @@ Return a object with following attributes:
           (leetcode--warn "LeetCode fetch problem ERROR: %S" error-info))
       (with-current-buffer (cdr result)
         (goto-char url-http-end-of-headers)
-        (alist-get 'question (alist-get 'data (json-read)))))))
+        (let* ((json (json-read))
+               (question (alist-get 'question (alist-get 'data json))))
+          question)))))
+
+(defun leetcode--markdown-to-html (markdown-text)
+  "Convert simple Markdown to HTML for better rendering.
+Supports: **bold**, *italic*, - lists, > blockquotes, code blocks."
+  (let ((html-text markdown-text))
+    ;; Convert **text** to <strong>text</strong>
+    (setq html-text (replace-regexp-in-string "\\*\\*\\([^*]+\\)\\*\\*" "<strong>\\1</strong>" html-text))
+    ;; Convert *text* to <em>text</em>
+    (setq html-text (replace-regexp-in-string "\\*\\([^*]+\\)\\*" "<em>\\1</em>" html-text))
+    ;; Convert `text` to <code>text</code>
+    (setq html-text (replace-regexp-in-string "`\\([^`]+\\)`" "<code>\\1</code>" html-text))
+    ;; Convert newlines to <br/>
+    (setq html-text (replace-regexp-in-string "\n" "<br/>" html-text))
+    ;; Convert - list items (with indentation)
+    (setq html-text (replace-regexp-in-string "^- " "&nbsp;&nbsp;&nbsp;•&nbsp;" html-text))
+    ;; Convert > blockquotes to indented text
+    (setq html-text (replace-regexp-in-string "^> " "&nbsp;&nbsp;&nbsp;&nbsp;" html-text))
+    html-text))
 
 (defun leetcode--replace-in-buffer (regex to)
   "Replace string matched REGEX in `current-buffer' to TO."
@@ -480,8 +503,8 @@ Return a list of rows, each row is a vector:
                          0 (length leetcode--checkmark)
                          'font-lock-face 'leetcode-checkmark-face leetcode--checkmark))
                     " ")
-                  ;; id
-                  (number-to-string (plist-get p :id))
+                   ;; id
+                   (number-to-string (plist-get p :id))
                   ;; title
                   (concat
                    (plist-get p :title)
@@ -986,16 +1009,25 @@ will show the description in other window and jump to it."
     (leetcode--debug "select title: %s" title)
     (let-alist problem
       (when (get-buffer buf-name)
-        (kill-buffer buf-name))
-      (with-temp-buffer
-        (insert (concat "<h1>" (number-to-string problem-id) ". " title "</h1>"))
-        (insert (concat (capitalize difficulty) html-margin
-                        "likes: " (number-to-string .likes) html-margin
-                        "dislikes: " (number-to-string .dislikes)))
-        (insert .content)
+        (kill-buffer buf-name))))
+    (let* ((content-val (alist-get 'content problem))
+           (translated-val (alist-get 'translatedContent problem))
+           (likes-val (alist-get 'likes problem))
+           (dislikes-val (alist-get 'dislikes problem))
+            (desc-content (if (and content-val
+                                    (string-match-p "English description is not available" content-val))
+                              translated-val
+                            content-val)))
+         (with-temp-buffer
+          (insert (concat "<h1>" (number-to-string problem-id) ". " title "</h1>"))
+          (insert (concat (capitalize difficulty) html-margin
+                          "likes: " (number-to-string likes-val) html-margin
+                          "dislikes: " (number-to-string dislikes-val)))
+          (insert "<hr/>")
+          ;; Convert markdown to HTML
+          (let ((converted (leetcode--markdown-to-html (or desc-content ""))))
+            (insert converted))
         (setq shr-current-font t)
-        (leetcode--replace-in-buffer "
-" "")
         ;; NOTE: shr.el can't render "https://xxxx.png", so we use "http"
         (leetcode--replace-in-buffer "https" "http")
         (shr-render-buffer (current-buffer)))
@@ -1031,17 +1063,20 @@ window and jump to it."
   (interactive (list (read-number "Show problem by problem id: "
                                   (leetcode--get-current-problem-id))))
   (let* ((problem-info (leetcode--get-problem-by-id problem-id))
-         (title (plist-get problem-info :title))
-         (problem (aio-await (leetcode--fetch-problem title))))
+         (title-slug (or (plist-get problem-info :title-slug)
+                          (leetcode--slugify-title (plist-get problem-info :title))))
+         (problem (aio-await (leetcode--fetch-problem title-slug))))
     (leetcode--show-problem problem problem-info)))
 
 (defun leetcode-show-problem-by-slug (slug-title)
-  "Show the description of problem with slug title. This function will work after first run M-x leetcode. This can be used with org-link elisp:(leetcode-show-problem-by-slug \"3sum\").
-Get problem by id and use `shr-render-buffer' to render problem
+  "Show the description of problem with slug title. This function will work after first run M-x leetcode. This can be used with org-link elisp:(leetcode-show-problem-by-slug \"two-sum\").
+Get problem by slug title and use `shr-render-buffer' to render problem
 description.  This action will show the description in other
 window and jump to it."
-  (interactive (list (read-number "Show problem by problem id: "
-                                  (leetcode--get-current-problem-id))))
+  (interactive (list (completing-read "Problem slug (e.g., two-sum): "
+                                      (mapcar (lambda (p)
+                                                (leetcode--slugify-title (plist-get p :title)))
+                                              (plist-get leetcode--all-problems :problems)))))
   (let* ((problem (seq-find (lambda (p)
                               (equal slug-title
                                      (leetcode--slugify-title
@@ -1049,8 +1084,9 @@ window and jump to it."
                             (plist-get leetcode--all-problems :problems)))
          (problem-id (plist-get problem :id))
          (problem-info (leetcode--get-problem-by-id problem-id))
-         (title (plist-get problem-info :title))
-         (problem  (leetcode--fetch-problem title)))
+         (title-slug (or (plist-get problem-info :title-slug)
+                          (leetcode--slugify-title (plist-get problem-info :title))))
+         (problem  (leetcode--fetch-problem title-slug)))
     (leetcode-show-problem problem-id)))
 
 (defun leetcode-show-current-problem ()
@@ -1097,8 +1133,9 @@ Call `leetcode-show-problem-in-browser' on the current problem id."
   (interactive (list (read-number "Solve the problem with id: "
                                   (leetcode--get-current-problem-id))))
   (let* ((problem-info (leetcode--get-problem-by-id problem-id))
-         (title (plist-get problem-info :title))
-         (problem (aio-await (leetcode--fetch-problem title))))
+         (title-slug (or (plist-get problem-info :title-slug)
+                          (leetcode--slugify-title (plist-get problem-info :title))))
+         (problem (aio-await (leetcode--fetch-problem title-slug))))
     (leetcode--show-problem problem problem-info)
     (leetcode--start-coding problem problem-info)))
 
